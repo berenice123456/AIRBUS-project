@@ -1,0 +1,167 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Analyse de projets Airbus</title>
+  <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+  <script>
+    function toggleTheme() {
+      const currentTheme = document.documentElement.getAttribute("data-theme");
+      document.documentElement.setAttribute("data-theme", currentTheme === "dark" ? "light" : "dark");
+    }
+    document.documentElement.setAttribute("data-theme", "light");
+
+    function updatePriorities(scenarioDiv) {
+      const paramsContainer = scenarioDiv.querySelector('.parameters_container');
+      const count = paramsContainer.childElementCount;
+      const prioritySelects = paramsContainer.querySelectorAll('[name="priority"]');
+      prioritySelects.forEach(select => {
+        const currentVal = select.value;
+        select.innerHTML = "";
+        for (let i = 1; i <= count; i++) {
+          const option = document.createElement('option');
+          option.value = i;
+          option.textContent = i;
+          select.appendChild(option);
+        }
+        select.value = currentVal && currentVal <= count ? currentVal : count;
+      });
+    }
+
+    function removeParameter(button, scenarioDiv) {
+      const row = button.closest('.form-row');
+      row.remove();
+      updatePriorities(scenarioDiv);
+    }
+
+    function addParameter(scenarioDiv) {
+      const paramsContainer = scenarioDiv.querySelector('.parameters_container');
+      const paramRow = document.createElement('div');
+      paramRow.className = 'form-row align-items-end mb-2';
+      paramRow.innerHTML = `
+        <div class="form-group col-md-6">
+          <label>Paramètre d'optimisation</label>
+          <select class="form-control" name="param">
+            <option value="RC Saving">Maximiser le RC Saving</option>
+            <option value="Weight">Minimiser le Weight</option>
+            <option value="ROI">Minimiser le ROI</option>
+          </select>
+        </div>
+        <div class="form-group col-md-3">
+          <label>Ordre de priorité</label>
+          <select class="form-control" name="priority"></select>
+        </div>
+        <div class="form-group col-md-3">
+          <label>Target (optionnel)</label>
+          <input type="number" class="form-control" name="target" placeholder="ex: 100">
+        </div>
+        <div class="form-group col-md-2">
+          <button type="button" class="btn btn-danger" onclick="removeParameter(this, this.closest('.card'))">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      `;
+      paramsContainer.appendChild(paramRow);
+      updatePriorities(scenarioDiv);
+    }
+
+    function addScenario() {
+      const container = document.getElementById('scenarios_container');
+      const scenarioCount = container.childElementCount + 1;
+      const scenarioDiv = document.createElement('div');
+      scenarioDiv.className = 'card mb-3';
+      scenarioDiv.innerHTML = `
+        <div class="card-body">
+          <h5 class="card-title">Scénario ${scenarioCount}</h5>
+          <div class="form-group">
+            <label>Nom du scénario</label>
+            <input type="text" class="form-control" name="scenario_name" placeholder="Entrez un nom personnalisé">
+          </div>
+          <div class="parameters_container"></div>
+          <button type="button" class="btn btn-secondary" onclick="addParameter(this.closest('.card'))">+ Ajouter un paramètre</button>
+        </div>
+      `;
+      container.appendChild(scenarioDiv);
+      addParameter(scenarioDiv);
+    }
+
+    function compileScenarios() {
+      const container = document.getElementById('scenarios_container');
+      const scenarios = [];
+      for (let i = 0; i < container.childElementCount; i++) {
+        const scenarioDiv = container.children[i];
+        const scenarioName = scenarioDiv.querySelector('[name="scenario_name"]').value;
+        const paramsContainer = scenarioDiv.querySelector('.parameters_container');
+        const params = [];
+        for (let j = 0; j < paramsContainer.childElementCount; j++) {
+          const paramRow = paramsContainer.children[j];
+          const param = paramRow.querySelector('[name="param"]').value;
+          const priority = parseInt(paramRow.querySelector('[name="priority"]').value);
+          const targetInput = paramRow.querySelector('[name="target"]');
+          const targetVal = targetInput && targetInput.value !== "" ? parseFloat(targetInput.value) : null;
+          const crit = { param, priority };
+          if (!isNaN(targetVal)) crit.target = targetVal;
+          params.push(crit);
+        }
+        scenarios.push({ name: scenarioName, criteria: params });
+      }
+      document.getElementById('scenarios_field').value = JSON.stringify(scenarios);
+    }
+  </script>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark shadow-sm">
+    <a class="navbar-brand" href="#">Airbus Project Analyzer</a>
+    <div class="ml-auto">
+      <button class="btn btn-outline-light" onclick="toggleTheme()">
+        <i class="fas fa-moon"></i> Mode Nuit
+      </button>
+    </div>
+  </nav>
+
+  <div class="container mt-5">
+    <div class="jumbotron glass animate__animated animate__fadeInDown">
+      <h1 class="display-4 text-center">Bienvenue dans l'analyseur de projets Airbus</h1>
+      <p class="lead text-center">Évaluez la faisabilité technique et financière de vos projets en un clic.</p>
+      <hr class="my-4">
+      <p class="text-center">
+        <i class="fas fa-file-excel"></i> Importez votre fichier Excel pour démarrer
+      </p>
+    </div>
+
+    <div class="card p-4 shadow-sm hover-float animate__animated animate__fadeInUp">
+      <h5 class="card-title">Importer un fichier Excel et créer vos scénarios</h5>
+      <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data" onsubmit="compileScenarios()">
+        <div class="form-group">
+          <label for="file">Choisissez un fichier Excel :</label>
+          <input type="file" class="form-control-file" name="file" id="file" required>
+        </div>
+        <hr>
+        <h3>Scénarios</h3>
+        <div id="scenarios_container"></div>
+        <div class="d-flex justify-content-between mb-3">
+          <button type="button" class="btn btn-primary" onclick="addScenario()">+ Ajouter un scénario</button>
+          <button type="submit" class="btn btn-success">
+            <i class="fas fa-upload"></i> Importer et générer le rapport
+          </button>
+        </div>
+        <input type="hidden" id="scenarios_field" name="scenarios" value="">
+      </form>
+    </div>
+  </div>
+
+  <footer class="footer mt-5">
+    <div class="container text-center">
+      <p>&copy; 2025 Airbus Project Analyzer</p>
+    </div>
+  </footer>
+
+  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
