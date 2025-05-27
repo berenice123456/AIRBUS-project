@@ -94,6 +94,8 @@
 
         <p>Budgets utilisés:</p>
         <ul id="list_budgets_{{scenario_key}}">
+          <div id="budgetAlert_{{ scenario_key }}"></div>
+
           {% for bc, used in data.budget_used.items() %}
             <li data-bc="{{bc}}">
               {{ bc }} = <span class="used">{{ used }}</span> k€ (disponible : {{ available_budgets[bc] }} k€)
@@ -107,10 +109,16 @@
         <div id="unselected_{{ scenario_key }}" class="collapse">
           <ul class="list-group">
             {% for p in data.non_selected_projects %}
-              <li class="list-group-item">
-                <strong>{{ p.NomProjet }}</strong><br>
-                RC: {{ p.RC }} k€, Weight: {{ p.Weight }} kg, ROI: {{ p.ROI }}
+              <li class="list-group-item d-flex justify-content-between align-items-center" data-nom="{{ p.NomProjet|e }}">
+                <div>
+                  <strong>{{ p.NomProjet }}</strong><br>
+                  RC: {{ p.RC }} k€, Weight: {{ p.Weight }} kg, ROI: {{ p.ROI }}
+                </div>
+                <button class="btn btn-sm btn-success" onclick="addProject('{{ scenario_key }}', '{{ p.NomProjet|e }}', {{ p.RCSaving }}, {{ p.Weight }}, {{ p.ROI }})">
+                  Ajouter
+                </button>
               </li>
+
             {% endfor %}
           </ul>
         </div>
@@ -264,40 +272,201 @@
 
     // Retirer un projet et rafraîchir tout
     function removeProject(scenarioKey, projetName) {
-      // supprimer ligne DOM
-      const row = document.querySelector(`tr[data-nom="${projetName.replace(/"/g,'\"')}"]`);
-      if(row) row.remove();
-      // retirer de la data
+  const sel = allData[scenarioKey].selected_projects;
+  const idx = sel.findIndex(p => p.NomProjet === projetName);
+  if (idx !== -1) {
+    const removed = sel.splice(idx, 1)[0];
+
+    // Ajoute aux non sélectionnés
+    allData[scenarioKey].non_selected_projects.push({
+      idx: removed.idx,
+      NomProjet: removed.NomProjet,
+      RCSaving: removed.RCSaving,
+      Weight: removed.Weight,
+      ROI: removed.ROI,
+      BudgetRequest: removed.BudgetRequest,
+      Obligatoire: removed.Obligatoire
+    });
+
+    updateUnselectedList(scenarioKey);
+  }
+
+  // Supprime la ligne du DOM
+  const row = document.querySelector(`tr[data-nom="${projetName.replace(/"/g, '\"')}"]`);
+  if (row) row.remove();
+
+  // Met à jour tous les éléments
+  updateTotals(scenarioKey);             // Totaux RC, Weight, ROI
+  updateBudgetChart(scenarioKey);        // Graphe de budget
+  updateCurve(scenarioKey);              // Graphe Pareto + tableau dynamique
+}
+
+
+    function updateUnselectedList(scenarioKey) {
+    const listDiv = document.getElementById(`unselected_${scenarioKey}`);
+    listDiv.innerHTML = '';
+
+    allData[scenarioKey].non_selected_projects.forEach(p => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      li.setAttribute('data-nom', p.NomProjet);
+      let budgetsText = '';
+      for (const year in p.BudgetRequest) {
+        budgetsText += `${year}: ${p.BudgetRequest[year].toFixed(1)} k€, `;
+      }
+      li.innerHTML = `
+        <div>
+          <strong>${p.NomProjet}</strong><br>
+          RC: ${p.RCSaving} k€, Weight: ${p.Weight} kg, ROI: ${p.ROI}<br>
+          ${budgetsText.slice(0, -2)}
+        </div>
+        <button class="btn btn-sm btn-success" onclick="addProject('${scenarioKey}', '${p.NomProjet.replace(/'/g, "\\'")}')">Ajouter</button>
+      `;
+      listDiv.appendChild(li);
+    });
+}
+function updateBudgetChart(scenarioKey) {
+  const chart = budgetCharts[scenarioKey];
+  const years = Object.keys(availableBudgets);
+
+  // Recalculer les données utilisées
+  const usedData = years.map(year =>
+    allData[scenarioKey].selected_projects.reduce((sum, proj) =>
+      sum + (proj.BudgetRequest?.[year] || 0), 0)
+  );
+
+  // Mise à jour des barres du graphique
+  chart.data.datasets[0].data = usedData;
+  chart.update();
+
+  // Mise à jour de la liste textuelle des budgets
+  const ul = document.getElementById(`list_budgets_${scenarioKey}`);
+  if (ul) {
+    years.forEach((year, i) => {
+      const li = ul.querySelector(`li[data-bc="${year}"]`);
+      if (li) li.querySelector('.used').innerText = usedData[i].toFixed(1);
+    });
+  }
+}
+
+
+    function updateTotals(scenarioKey) {
       const sel = allData[scenarioKey].selected_projects;
-      const idx = sel.findIndex(p=>p.NomProjet===projetName);
-      if(idx!==-1) sel.splice(idx,1);
-      // recalcul totaux
+
+      // Mise à jour des totaux RC, Weight, ROI
       const total_rc  = sel.reduce((s,p)=>s+p.RCSaving,0);
       const total_wt  = sel.reduce((s,p)=>s+p.Weight,0);
       const total_roi = sel.reduce((s,p)=>s+p.ROI,0);
+
       document.getElementById(`total_rc_${scenarioKey}`).innerText = total_rc.toFixed(1);
       document.getElementById(`total_wt_${scenarioKey}`).innerText = total_wt.toFixed(1);
-      document.getElementById(`total_roi_${scenarioKey}`).innerText= total_roi.toFixed(1);
-      // rafraîchir budget et liste
+      document.getElementById(`total_roi_${scenarioKey}`).innerText = total_roi.toFixed(1);
+
+      // Mise à jour du graphe de budget
       updateBudgetChart(scenarioKey);
+
+      // Mise à jour du graphe Pareto + tableau dynamique
       updateCurve(scenarioKey);
+
+      // Mise à jour de la liste textuelle des budgets utilisés
+      const years = Object.keys(availableBudgets);
+      const ul = document.getElementById(`list_budgets_${scenarioKey}`);
+      if (ul) {
+        years.forEach(year => {
+          const li = ul.querySelector(`li[data-bc="${year}"]`);
+          if (li) {
+            const used = sel.reduce((sum, p) => sum + (p.BudgetRequest[year] || 0), 0);
+            li.querySelector('.used').innerText = used.toFixed(1);
+          }
+        });
+        checkBudgetOverflow(scenarioKey);
+
+      }
     }
 
-    // Mettre à jour chart budget et liste textuelle
-    function updateBudgetChart(scenarioKey) {
-      const chart = budgetCharts[scenarioKey];
-      const years = Object.keys(availableBudgets);
-      const usedData = years.map(y=> allData[scenarioKey].selected_projects
-                                   .reduce((s,p)=>s+(p.BudgetRequest[y]||0),0));
-      chart.data.datasets[0].data = usedData;
-      chart.update();
-      // liste textuelle
-      const ul = document.getElementById(`list_budgets_${scenarioKey}`);
-      years.forEach((year,i)=>{
-        const li = ul.querySelector(`li[data-bc="${year}"]`);
-        if(li) li.querySelector('.used').innerText = usedData[i].toFixed(1);
-      });
+
+
+    function addProject(scenarioKey, nomProjet, rc, weight, roi) {
+  const sel = allData[scenarioKey].selected_projects;
+  const nomNettoye = nomProjet.replace(/<[^>]*>/g, '').trim();
+  if (sel.find(p => p.NomProjet.replace(/<[^>]*>/g, '').trim() === nomNettoye)) return;
+
+  // Récupère le projet complet depuis non_selected_projects
+  const idx = allData[scenarioKey].non_selected_projects.findIndex(p => {
+    return p.NomProjet.replace(/<[^>]*>/g, '').trim() === nomNettoye;
+  });
+  let newProj;
+  if (idx !== -1) {
+    newProj = allData[scenarioKey].non_selected_projects.splice(idx, 1)[0];
+  } else {
+    const budgetDefault = Object.fromEntries(Object.keys(availableBudgets).map(y => [y, 0]));
+    newProj = {
+      NomProjet: nomProjet,
+      RCSaving: rc,
+      Weight: weight,
+      ROI: roi,
+      BudgetRequest: budgetDefault
+    };
+  }
+
+  sel.push(newProj);
+
+  // Supprimer du DOM la ligne du projet non sélectionné
+  const item = document.querySelector(`#unselected_${scenarioKey} li[data-nom="${nomProjet.replace(/"/g,'\"')}"]`);
+  if (item) item.remove();
+
+  // Ajouter dans le tableau HTML des projets sélectionnés
+  const table = document.querySelector(`div table tbody`);
+  if (table) {
+    const row = document.createElement('tr');
+    row.setAttribute('data-nom', nomProjet.replace(/"/g,'\"'));
+    row.innerHTML = `
+      <td>${nomProjet}</td>
+      <td>${newProj.RCSaving}</td>
+      <td>${newProj.Weight}</td>
+      <td>${newProj.ROI}</td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="removeProject('${scenarioKey}', '${nomProjet.replace(/'/g, "\\'")}')">Annuler</button>
+      </td>
+      ${Object.keys(availableBudgets).map(bc => `<td>${newProj.BudgetRequest[bc].toFixed(1)}</td>`).join('')}
+    `;
+    table.appendChild(row);
+  }
+
+  // 🔄 MAJ complète
+  updateTotals(scenarioKey);
+  updateUnselectedList(scenarioKey);
+}
+
+function checkBudgetOverflow(scenarioKey) {
+  const sel = allData[scenarioKey].selected_projects;
+  const years = Object.keys(availableBudgets);
+  const alertDiv = document.getElementById(`budgetAlert_${scenarioKey}`);
+  alertDiv.innerHTML = ""; // reset
+
+  let warnings = [];
+
+  years.forEach(year => {
+    const used = sel.reduce((sum, p) => sum + (p.BudgetRequest[year] || 0), 0);
+    const limit = availableBudgets[year];
+    const diff = used - limit;
+
+    if (diff > 0) {
+      warnings.push(`• ${year} : dépassement de ${diff.toFixed(1)} k€`);
     }
+  });
+
+  if (warnings.length > 0) {
+    alertDiv.innerHTML = `
+      <div class="alert alert-warning mt-2" role="alert">
+        <strong>⚠️ Attention :</strong> vous dépassez le budget pour :<br>
+        ${warnings.join("<br>")}
+      </div>
+    `;
+  }
+}
+
+
   </script>
 
   <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
